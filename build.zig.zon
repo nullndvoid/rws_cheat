@@ -1,0 +1,12 @@
+.{
+    .name = .RWS_CHEAT_LIB,
+    .version = "0.0.0",
+    .fingerprint = 0xd646a2fdbfad4ffc,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
