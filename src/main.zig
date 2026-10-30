@@ -63,7 +63,11 @@ fn getPidForName(name: [:0]const u8) !w.DWORD {
 
 fn checkProcessName(pid: u32, expected: [:0]const u8) !bool {
     var process_name: [w.MAX_PATH:0]w.CHAR = @splat(0);
-    const proc_handle = w32.OpenProcess(w32.PROCESS_QUERY_INFORMATION | w32.PROCESS_VM_READ, w.BOOL.FALSE, pid);
+    const proc_handle = w32.OpenProcess(
+        w32.PROCESS_QUERY_INFORMATION | w32.PROCESS_VM_READ,
+        w.BOOL.FALSE,
+        pid,
+    );
     defer if (proc_handle) |h| {
         _ = w32.CloseHandle(h);
     };
@@ -78,7 +82,12 @@ fn checkProcessName(pid: u32, expected: [:0]const u8) !bool {
     var len: usize = 0;
 
     if (w32.EnumProcessModules(proc_handle.?, @ptrCast(&module), 8, &cbNeeded) != .FALSE) {
-        len = w32.GetModuleBaseNameA(proc_handle.?, module[0], &process_name, process_name.len / @sizeOf(w.CHAR));
+        len = w32.GetModuleBaseNameA(
+            proc_handle.?,
+            module[0],
+            &process_name,
+            process_name.len / @sizeOf(w.CHAR),
+        );
     }
 
     if (len == 0)
