@@ -1,4 +1,5 @@
 const std = @import("std");
+const Translator = @import("translate_c").Translator;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -7,6 +8,16 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
+
+    const translate_c = b.dependency("translate_c", .{});
+    const translator: Translator = .init(
+        translate_c,
+        .{
+            .c_source_file = b.path("src/c.h"),
+            .target = target,
+            .optimize = optimize,
+        },
+    );
 
     const exe = b.addExecutable(.{
         .name = "rws_injector",
@@ -20,6 +31,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    exe.root_module.addImport("c", translator.mod);
     exe.root_module.link_libc = true;
     exe.root_module.linkSystemLibrary("psapi", .{});
 

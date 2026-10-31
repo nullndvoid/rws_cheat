@@ -1,5 +1,6 @@
 //! Helpful extern function definitions for various Windows API functions.
 const w = @import("std").os.windows;
+const c = @import("c");
 
 pub extern "kernel32" fn OpenProcess(
     dwDesiredAccess: w.DWORD,
@@ -37,5 +38,22 @@ pub extern "psapi" fn GetModuleBaseNameA(
     nSize: w.DWORD,
 ) callconv(.winapi) w.DWORD;
 
+pub const PROCESS_ALL_ACCESS = c.PROCESS_ALL_ACCESS;
 pub const PROCESS_QUERY_INFORMATION: w.DWORD = 0x0400;
 pub const PROCESS_VM_READ: w.DWORD = 0x0010;
+
+pub const MEM_COMMIT = c.MEM_COMMIT;
+pub const MEM_RESERVE = c.MEM_RESERVE;
+pub const MEM_RELEASE = c.MEM_RELEASE;
+pub const PAGE_READWRITE = c.PAGE_READWRITE;
+
+pub const VirtualAllocEx = c.VirtualAllocEx;
+pub const VirtualFreeEx = c.VirtualFreeEx;
+pub const WriteProcessMemory = c.WriteProcessMemory;
+
+pub const GetModuleHandleA = c.GetModuleHandleA;
+pub const GetProcAddress = c.GetProcAddress;
+pub const CreateRemoteThread = c.CreateRemoteThread;
+pub const WaitForSingleObject = c.WaitForSingleObject;
+
+pub const INFINITE = c.INFINITE;

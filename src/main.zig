@@ -11,6 +11,7 @@ const DLL_PATH = "./cheat.dll";
 
 pub fn main(init: std.process.Init) !void {
     const arena: std.mem.Allocator = init.arena.allocator();
+    const io = init.io;
 
     const args = try init.minimal.args.toSlice(arena);
     for (args) |arg| {
@@ -24,7 +25,13 @@ pub fn main(init: std.process.Init) !void {
     const pid_or_name = if (args.len >= 2) args[1] else PROCESS_NAME;
     const path_to_dll = if (args.len >= 3) args[2] else DLL_PATH;
 
+    // Check the file exists and we can access it.
+    const file = try Io.Dir.cwd().openFile(io, path_to_dll, .{ .path_only = true });
+    defer file.close(io);
+
     try inject(pid_or_name, path_to_dll);
+
+    std.log.info("Injected DLL!", .{});
 }
 
 fn inject(pid_or_name: [:0]const u8, dll_path: [:0]const u8) !void {
@@ -32,10 +39,42 @@ fn inject(pid_or_name: [:0]const u8, dll_path: [:0]const u8) !void {
         break :blk try getPidForName(pid_or_name);
     };
 
-    std.debug.print("PID: {d}\n", .{pid});
-    std.debug.print("DLL PATH: {s}\n", .{dll_path});
+    std.log.info("PID: {d}", .{pid});
+    std.log.info("DLL PATH: {s}", .{dll_path});
 
     // Get a handle
+    const proc_handle = w32.OpenProcess(w32.PROCESS_ALL_ACCESS, .FALSE, pid).?;
+    defer _ = w32.CloseHandle(proc_handle);
+
+    // Allocate memory for the DLL load path.
+    const path_ptr = w32.VirtualAllocEx(
+        proc_handle,
+        null,
+        dll_path.len + 1,
+        w32.MEM_COMMIT | w32.MEM_RESERVE,
+        w32.PAGE_READWRITE,
+    ).?;
+    defer _ = w32.VirtualFreeEx(proc_handle, path_ptr, 0, w32.MEM_RELEASE);
+
+    // Write DLL path into target.
+    _ = w32.WriteProcessMemory(proc_handle, path_ptr, dll_path.ptr, dll_path.len + 1, null);
+
+    // Get LoadLibraryA address.
+    const load_library_addr = w32.GetProcAddress(w32.GetModuleHandleA("kernel32.dll"), "LoadLibraryA");
+
+    // Create a remote thread calling our function.
+    const thread_handle = w32.CreateRemoteThread(
+        proc_handle,
+        null,
+        0,
+        @ptrCast(load_library_addr),
+        path_ptr,
+        0,
+        null,
+    );
+    defer _ = w32.CloseHandle(thread_handle.?);
+
+    _ = w32.WaitForSingleObject(thread_handle, w32.INFINITE);
 }
 
 fn getPidForName(name: [:0]const u8) !w.DWORD {
