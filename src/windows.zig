@@ -55,5 +55,8 @@ pub const GetModuleHandleA = c.GetModuleHandleA;
 pub const GetProcAddress = c.GetProcAddress;
 pub const CreateRemoteThread = c.CreateRemoteThread;
 pub const WaitForSingleObject = c.WaitForSingleObject;
+pub const GetExitCodeThread = c.GetExitCodeThread;
 
 pub const INFINITE = c.INFINITE;
+pub const WAIT_FAILED = c.WAIT_FAILED;
+pub const STILL_ACTIVE = c.STILL_ACTIVE;

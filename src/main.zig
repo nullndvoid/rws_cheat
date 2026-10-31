@@ -43,8 +43,11 @@ fn inject(pid_or_name: [:0]const u8, dll_path: [:0]const u8) !void {
     std.log.info("DLL PATH: {s}", .{dll_path});
 
     // Get a handle
-    const proc_handle = w32.OpenProcess(w32.PROCESS_ALL_ACCESS, .FALSE, pid).?;
-    defer _ = w32.CloseHandle(proc_handle);
+    const proc_handle = w32.OpenProcess(w32.PROCESS_ALL_ACCESS, .FALSE, pid) orelse {
+        fail("OpenProcess");
+        return error.OpenProcess;
+    };
+    defer if (w32.CloseHandle(proc_handle) == .FALSE) fail("CloseHandle (process)");
 
     // Allocate memory for the DLL load path.
     const path_ptr = w32.VirtualAllocEx(
@@ -53,14 +56,27 @@ fn inject(pid_or_name: [:0]const u8, dll_path: [:0]const u8) !void {
         dll_path.len + 1,
         w32.MEM_COMMIT | w32.MEM_RESERVE,
         w32.PAGE_READWRITE,
-    ).?;
-    defer _ = w32.VirtualFreeEx(proc_handle, path_ptr, 0, w32.MEM_RELEASE);
+    ) orelse {
+        fail("VirtualAllocEx");
+        return error.VirtualAllocEx;
+    };
+    defer if (w32.VirtualFreeEx(proc_handle, path_ptr, 0, w32.MEM_RELEASE) == 0) fail("VirtualFreeEx");
 
     // Write DLL path into target.
-    _ = w32.WriteProcessMemory(proc_handle, path_ptr, dll_path.ptr, dll_path.len + 1, null);
+    if (w32.WriteProcessMemory(proc_handle, path_ptr, dll_path.ptr, dll_path.len + 1, null) == 0) {
+        fail("WriteProcessMemory");
+        return error.WriteProcessMemory;
+    }
 
     // Get LoadLibraryA address.
-    const load_library_addr = w32.GetProcAddress(w32.GetModuleHandleA("kernel32.dll"), "LoadLibraryA");
+    const kernel32 = w32.GetModuleHandleA("kernel32.dll") orelse {
+        fail("GetModuleHandleA");
+        return error.GetModuleHandleA;
+    };
+    const load_library_addr = w32.GetProcAddress(kernel32, "LoadLibraryA") orelse {
+        fail("GetProcAddress");
+        return error.GetProcAddress;
+    };
 
     // Create a remote thread calling our function.
     const thread_handle = w32.CreateRemoteThread(
@@ -71,10 +87,43 @@ fn inject(pid_or_name: [:0]const u8, dll_path: [:0]const u8) !void {
         path_ptr,
         0,
         null,
-    );
-    defer _ = w32.CloseHandle(thread_handle.?);
+    ) orelse {
+        fail("CreateRemoteThread");
+        return error.CreateRemoteThread;
+    };
+    defer if (w32.CloseHandle(thread_handle) == .FALSE) fail("CloseHandle (thread)");
 
-    _ = w32.WaitForSingleObject(thread_handle, w32.INFINITE);
+    if (w32.WaitForSingleObject(thread_handle, w32.INFINITE) == w32.WAIT_FAILED) {
+        fail("WaitForSingleObject");
+        return error.WaitForSingleObject;
+    }
+
+    var exit_status: w.DWORD = undefined;
+    if (w32.GetExitCodeThread(
+        thread_handle,
+        &exit_status,
+    ) == 0) {
+        fail("GetExitCodeThread");
+        return error.GetExitCodeThread;
+    }
+
+    if (exit_status != w32.STILL_ACTIVE) {
+        std.log.err("The thread exited with status {d}.", .{exit_status});
+    }
+}
+
+/// Logs `func` along with the calling thread's last Win32 error.
+fn fail(comptime func: []const u8) void {
+    const err = w.GetLastError();
+    const name = std.enums.tagName(w.Win32Error, err) orelse "unknown";
+    std.log.err(func ++ " failed: {s} ({d})", .{ name, @backingInt(err) });
+}
+
+/// Like `logLastError`, but at debug level and tagged with the PID being probed.
+fn failDebug(comptime func: []const u8, pid: w.DWORD) void {
+    const err = w.GetLastError();
+    const name = std.enums.tagName(w.Win32Error, err) orelse "unknown";
+    std.log.debug(func ++ " failed for PID {d}: {s} ({d})", .{ pid, name, @backingInt(err) });
 }
 
 fn getPidForName(name: [:0]const u8) !w.DWORD {
@@ -84,6 +133,7 @@ fn getPidForName(name: [:0]const u8) !w.DWORD {
     var cProcesses: w.DWORD = 0;
 
     if (w32.EnumProcesses(@ptrCast(&processes), @sizeOf(@TypeOf(processes)), &cbNeeded) == .FALSE) {
+        fail("EnumProcesses");
         return error.EnumProcesses;
     }
 
@@ -106,31 +156,30 @@ fn checkProcessName(pid: u32, expected: [:0]const u8) !bool {
         w32.PROCESS_QUERY_INFORMATION | w32.PROCESS_VM_READ,
         w.BOOL.FALSE,
         pid,
-    );
-    defer if (proc_handle) |h| {
-        _ = w32.CloseHandle(h);
+    ) orelse {
+        failDebug("OpenProcess", pid);
+        return false;
     };
-
-    if (proc_handle == null) {
-        return false; // maybe return errors if we need.
-    }
+    defer if (w32.CloseHandle(proc_handle) == .FALSE) fail("CloseHandle");
 
     var module: [1]w.HMODULE = undefined;
     var cbNeeded: w.DWORD = 0;
 
-    var len: usize = 0;
-
-    if (w32.EnumProcessModules(proc_handle.?, @ptrCast(&module), 8, &cbNeeded) != .FALSE) {
-        len = w32.GetModuleBaseNameA(
-            proc_handle.?,
-            module[0],
-            &process_name,
-            process_name.len / @sizeOf(w.CHAR),
-        );
+    if (w32.EnumProcessModules(proc_handle, @ptrCast(&module), @sizeOf(@TypeOf(module)), &cbNeeded) == .FALSE) {
+        failDebug("EnumProcessModules", pid);
+        return false;
     }
 
-    if (len == 0)
-        return false; // maybe return errors?
+    const len = w32.GetModuleBaseNameA(
+        proc_handle,
+        module[0],
+        &process_name,
+        process_name.len / @sizeOf(w.CHAR),
+    );
+    if (len == 0) {
+        failDebug("GetModuleBaseNameA", pid);
+        return false;
+    }
 
     const name = process_name[0..len];
 
